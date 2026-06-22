@@ -1,0 +1,61 @@
+name: Gen Con OPTCG monitor
+
+on:
+  schedule:
+    # Every 5 minutes is GitHub's practical floor; runs often start a few
+    # minutes late under load, so treat this as "roughly every 5-10 min".
+    - cron: "*/5 * * * *"
+  workflow_dispatch:   # lets you trigger a run manually from the Actions tab
+
+# Prevent overlapping runs if one is slow.
+concurrency:
+  group: gencon-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright + Chromium
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      # Restore the last-known sold-out/available state so we only alert on a
+      # real transition instead of re-alerting every run. The Actions
+      # filesystem is wiped between runs, so we cache the state file.
+      - name: Restore previous state
+        uses: actions/cache/restore@v4
+        with:
+          path: gencon_state.json
+          key: gencon-state-${{ github.run_id }}
+          restore-keys: |
+            gencon-state-
+
+      - name: Run monitor
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          # Uncomment if you also want ntfy / Pushover alerts:
+          # NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          # PUSHOVER_TOKEN: ${{ secrets.PUSHOVER_TOKEN }}
+          # PUSHOVER_USER:  ${{ secrets.PUSHOVER_USER }}
+        run: python gencon_monitor.py
+
+      # Save the updated state for the next run. A fresh key each run plus the
+      # restore-keys prefix above gives us "always read the newest, always
+      # write a new one" behavior.
+      - name: Save updated state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: gencon_state.json
+          key: gencon-state-${{ github.run_id }}
